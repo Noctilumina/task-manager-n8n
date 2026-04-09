@@ -1,0 +1,76 @@
+{
+  "name": "Google Calendar Pull",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 15 }]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": { "__rl": true, "value": "primary", "mode": "id" },
+        "timeMin": "={{ $now.toISO() }}",
+        "timeMax": "={{ $now.plus(7, 'days').toISO() }}",
+        "options": {}
+      },
+      "name": "Get Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "name": "Google Calendar - Production"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  json: {\n    externalId: item.json.id,\n    title: item.json.summary ?? '(No title)',\n    description: item.json.description ?? '',\n    startTime: item.json.start?.dateTime ?? item.json.start?.date,\n    endTime: item.json.end?.dateTime ?? item.json.end?.date,\n    calendarSource: 'google',\n    lastSyncedAt: new Date().toISOString(),\n    updatedAt: new Date().toISOString(),\n  }\n}));"
+      },
+      "name": "Transform Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/{{ $env.FIREBASE_PROJECT_ID }}/databases/(default)/documents/calendarEvents/{{ $json.userId }}/events/{{ $json.externalId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "fields.externalId.stringValue", "value": "={{ $json.externalId }}" },
+            { "name": "fields.title.stringValue", "value": "={{ $json.title }}" },
+            { "name": "fields.calendarSource.stringValue", "value": "={{ $json.calendarSource }}" },
+            { "name": "fields.lastSyncedAt.timestampValue", "value": "={{ $json.lastSyncedAt }}" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Upsert to Firestore",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Get Calendar Events", "type": "main", "index": 0 }]] },
+    "Get Calendar Events": { "main": [[{ "node": "Transform Events", "type": "main", "index": 0 }]] },
+    "Transform Events": { "main": [[{ "node": "Upsert to Firestore", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "calendar-sync" }]
+}
